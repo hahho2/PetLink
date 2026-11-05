@@ -18,6 +18,7 @@ from petlink.pet_window import PetKind, PetState, PetWindow
 class FakeProvider:
     fail = False
     calls = 0
+    last_history = []
 
     def __init__(self, config):
         self.config = config
@@ -26,6 +27,7 @@ class FakeProvider:
         return True
 
     def stream(self, history):
+        type(self).last_history = list(history)
         type(self).calls += 1
         time.sleep(.1)
         if self.fail:
@@ -40,7 +42,10 @@ class ChatTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
-        self.chat = ChatWindow(provider_factory=FakeProvider)
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        settings = QSettings(str(Path(self.folder.name) / "settings.ini"), QSettings.Format.IniFormat)
+        self.chat = ChatWindow(provider_factory=FakeProvider, settings=settings)
         self.chat.model.setText("test-model")
         FakeProvider.fail, FakeProvider.calls = False, 0
 
@@ -104,6 +109,16 @@ class ChatTests(unittest.TestCase):
         self.chat.test_connection()
         self.wait_idle()
         self.assertIn("reachable", self.chat.status.text())
+
+    def test_local_prompt_is_bounded_for_small_models(self):
+        from petlink.models import ChatMessage
+        self.chat.history = [ChatMessage("user" if i % 2 == 0 else "assistant", "x" * 1800) for i in range(16)]
+        self.chat.composer.setPlainText("Give a short tip")
+        self.chat.send()
+        self.wait_idle()
+        self.assertLessEqual(len(FakeProvider.last_history), 9)  # system + eight recent messages
+        self.assertLessEqual(sum(len(m.content) for m in FakeProvider.last_history[1:]), 8000)
+        self.assertIn("Draft task from message", FakeProvider.last_history[0].content)
 
     def test_input_method_enter_does_not_send_during_composition(self):
         self.chat.composer.setPlainText("Study")

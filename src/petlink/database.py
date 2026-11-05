@@ -100,14 +100,54 @@ class Database:
         with self.engine.connect() as conn:
             return conn.execute(text("SELECT draft FROM conversations WHERE id=:id"), {"id": conversation_id}).scalar() or ""
 
+    def task_context(self, conversation_id):
+        with self.engine.connect() as conn:
+            raw = conn.execute(text("SELECT task_context FROM conversations WHERE id=:id"), {"id": conversation_id}).scalar() or "{}"
+        return json.loads(raw)
+
+    def save_task_context(self, conversation_id, context):
+        payload = json.dumps(context, ensure_ascii=False)
+        if len(payload) > 40000:
+            raise ValueError("Task follow-up context is full. Start a new task request.")
+        with self.engine.begin() as conn:
+            conn.execute(text("UPDATE conversations SET task_context=:context WHERE id=:id"),
+                {"id": conversation_id, "context": payload})
+
+    def pending_by_id(self, pending_id):
+        with self.engine.connect() as conn:
+            row = conn.execute(text("SELECT * FROM pending_actions WHERE id=:id"), {"id": pending_id}).mappings().first()
+            return dict(row) if row else None
+
     def tasks(self, limit=100, offset=0):
         with self.engine.connect() as conn:
             rows = conn.execute(text("SELECT * FROM tasks WHERE deleted_at IS NULL ORDER BY id DESC LIMIT :limit OFFSET :offset"), {"limit": limit, "offset": offset}).mappings()
-            return [{**dict(row), "schedule": get_schedule(conn, row["id"])} for row in rows]
+            tasks = []
+            for row in rows:
+                schedule = get_schedule(conn, row["id"])
+                progress = conn.execute(text("SELECT COUNT(*) AS recorded, COALESCE(SUM(CASE WHEN o.completed_at IS NOT NULL THEN 1 ELSE 0 END),0) AS completed FROM task_occurrences o JOIN task_schedules s ON s.task_id=o.task_id AND s.revision=o.schedule_revision WHERE o.task_id=:id AND o.cancelled_at IS NULL AND (s.end_date IS NULL OR o.scheduled_date<=s.end_date)"), {"id": row["id"]}).mappings().one()
+                planned = None
+                if schedule["frequency"] != "none" and schedule["end_date"] and row["due_date"]:
+                    step = 1 if schedule["frequency"] == "daily" else 7
+                    planned = (date.fromisoformat(schedule["end_date"]) - date.fromisoformat(row["due_date"])).days // step + 1
+                tasks.append({**dict(row), "schedule": schedule, "progress": {**dict(progress), "planned": planned}})
+            return tasks
 
     def pending(self, limit=100, offset=0):
         with self.engine.connect() as conn:
             return [dict(row) for row in conn.execute(text("SELECT * FROM pending_actions WHERE status='pending' ORDER BY id DESC LIMIT :limit OFFSET :offset"), {"limit": limit, "offset": offset}).mappings()]
+
+    def task_overview(self, kind, limit=20):
+        """Read confirmed records only; never poll or generate reminders here."""
+        filters = {"tasks": "1=1", "schedules": "t.due_date IS NOT NULL",
+            "reminders": "EXISTS (SELECT 1 FROM task_schedules s WHERE s.task_id=t.id AND (s.frequency!='none' OR s.reminder_time IS NOT NULL))"}
+        if kind not in filters or not 1 <= limit <= 100:
+            raise ValueError("Choose tasks, schedules or reminders and a bounded limit.")
+        with self.engine.connect() as conn:
+            rows = conn.execute(text("SELECT t.* FROM tasks t WHERE t.deleted_at IS NULL AND t.status!='done' AND "
+                + filters[kind] + " ORDER BY t.due_date IS NULL,t.due_date,t.id LIMIT :limit"), {"limit": limit + 1}).mappings().all()
+            records = [{**dict(row), "schedule": get_schedule(conn, row["id"])} for row in rows[:limit]]
+            pending = conn.execute(text("SELECT COUNT(*) FROM pending_actions WHERE status='pending'")).scalar_one()
+        return dict(records=records, more=len(rows) > limit, pending=pending)
 
     @staticmethod
     def validate(actions):
@@ -190,6 +230,7 @@ class Database:
                     if occurrence is None:
                         raise ValueError("This occurrence changed or is already complete. Refresh and review it again.")
                     conn.execute(text("UPDATE task_occurrences SET completed_at=:now WHERE id=:id"), {"now": now, "id": occurrence["id"]})
+                    conn.execute(text("UPDATE notifications SET read_at=:now WHERE event_key=:key AND read_at IS NULL"), {"now": now, "key": f"occurrence:{occurrence['id']}"})
                     after_occurrence = {**dict(occurrence), "completed_at": now}
                     conn.execute(text("INSERT INTO audit_events(pending_id,action,task_id,before_json,after_json,created_at) VALUES(:pending,:action,:task,:before,:after,:now)"),
                         dict(pending=pending_id, action=kind, task=action["task_id"], before=json.dumps(dict(occurrence)), after=json.dumps(after_occurrence), now=now))
@@ -214,6 +255,8 @@ class Database:
                                   reset=bool(before and before["due_date"] != values["due_date"]))
                 after = dict(conn.execute(text("SELECT * FROM tasks WHERE id=:id"), {"id": task_id}).mappings().one())
                 after["schedule"] = get_schedule(conn, task_id)
+                if after["status"] == "done" or after["deleted_at"] is not None:
+                    conn.execute(text("UPDATE notifications SET read_at=:now WHERE task_id=:id AND read_at IS NULL"), {"now": now, "id": task_id})
                 conn.execute(text("INSERT INTO audit_events(pending_id,action,task_id,before_json,after_json,created_at) VALUES(:pending,:action,:task,:before,:after,:now)"),
                              dict(pending=pending_id, action=kind, task=task_id, before=json.dumps(before), after=json.dumps(after), now=now))
                 ids.append(task_id)

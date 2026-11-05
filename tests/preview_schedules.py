@@ -19,6 +19,7 @@ with tempfile.TemporaryDirectory() as folder:
     editor.title.setText("Read a chapter")
     editor.due.setText("2026-11-04")
     editor.frequency.setCurrentIndex(editor.frequency.findData("daily"))
+    editor.month.click()
     editor.reminder_time.setText("18:30")
     editor.show()
     app.processEvents()

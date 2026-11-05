@@ -6,6 +6,7 @@ import time
 import unittest
 from unittest.mock import patch
 from sqlalchemy.exc import SQLAlchemyError
+from PySide6.QtCore import QSettings
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 from petlink.chat_window import ChatWindow
@@ -29,6 +30,7 @@ class PersistenceUITests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.db = Database(Path(self.folder.name) / "ui.sqlite3")
+        self.settings = QSettings(str(Path(self.folder.name) / "settings.ini"), QSettings.Format.IniFormat)
 
     def tearDown(self):
         self.db.close()
@@ -54,7 +56,7 @@ class PersistenceUITests(unittest.TestCase):
         editor.deleteLater()
 
     def test_chat_and_unsent_input_restore(self):
-        chat = ChatWindow(database=self.db, provider_factory=Provider)
+        chat = ChatWindow(database=self.db, provider_factory=Provider, settings=self.settings)
         chat.model.setText("fixture")
         chat.composer.setPlainText("Help me study")
         chat.send()
@@ -64,7 +66,7 @@ class PersistenceUITests(unittest.TestCase):
         self.assertFalse(chat._busy)
         chat.composer.setPlainText("Next idea")
         chat.shutdown()
-        restored = ChatWindow(database=self.db)
+        restored = ChatWindow(database=self.db, settings=self.settings)
         self.assertEqual([m.role for m in restored.history], ["user", "assistant"])
         self.assertEqual(restored.composer.toPlainText(), "Next idea")
         restored.shutdown()
@@ -74,7 +76,7 @@ class PersistenceUITests(unittest.TestCase):
         restored.deleteLater()
 
     def test_failed_user_save_does_not_send_or_lose_input(self):
-        chat = ChatWindow(database=self.db, provider_factory=Provider)
+        chat = ChatWindow(database=self.db, provider_factory=Provider, settings=self.settings)
         chat.model.setText("fixture")
         chat.composer.setPlainText("Keep this text")
         with patch.object(self.db, "add_message", side_effect=SQLAlchemyError()):
@@ -86,7 +88,7 @@ class PersistenceUITests(unittest.TestCase):
         chat.deleteLater()
 
     def test_reply_save_can_retry_without_generating_again(self):
-        chat = ChatWindow(database=self.db, provider_factory=Provider)
+        chat = ChatWindow(database=self.db, provider_factory=Provider, settings=self.settings)
         chat.model.setText("fixture")
         chat.composer.setPlainText("Help me study")
         original = self.db.add_message

@@ -29,7 +29,7 @@ class DatabaseTests(unittest.TestCase):
         self.db.confirm(pending, 1)
         self.assertEqual(len(self.db.tasks()), 1)
         with self.db.engine.connect() as conn:
-            self.assertEqual(conn.execute(text("SELECT version_num FROM alembic_version")).scalar(), "003")
+            self.assertEqual(conn.execute(text("SELECT version_num FROM alembic_version")).scalar(), "005")
 
     def test_revision_invalidates_old_confirmation_and_prevents_duplicates(self):
         pending = self.db.propose([create("Five questions")])

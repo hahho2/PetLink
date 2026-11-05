@@ -18,8 +18,10 @@ class PetState(str, Enum):
     LISTENING = "listening"
     THINKING = "thinking"
     CURIOUS = "curious"
+    CONFUSED = "confused"
     HAPPY = "happy"
     SLEEPY = "sleepy"
+    REMINDER = "reminder"
 
 
 class PetKind(str, Enum):
@@ -36,6 +38,7 @@ class PetWindow(QWidget):
     chat_requested = Signal()
     voice_setup_requested = Signal()
     quit_requested = Signal()
+    hide_requested = Signal()
     pet_kind_changed = Signal(PetKind)
 
     def __init__(self, pet_kind: PetKind = PetKind.ANIME_AZURE, *, settings=None, idle_intervals=None) -> None:
@@ -47,6 +50,9 @@ class PetWindow(QWidget):
         except ValueError:
             self._pet_kind = pet_kind
         self._clock = time.monotonic()
+        self._state_started = self._clock
+        self._notification_count = 0
+        self.tray_available = False
         self._speech_level = None
         self._last_activity = self._clock
         self._blink_at = self._wink_at = self._ear_at = self._reaction_at = -100.0
@@ -76,13 +82,18 @@ class PetWindow(QWidget):
         from .pet_controls import PetControls
         self.controls = PetControls(self)
         self.badge = QToolButton(self)
-        self.badge.setText("!")
-        self.badge.setGeometry(181, 22, 28, 28)
-        self.badge.setStyleSheet("QToolButton { background:#FFD166; color:#242333; border:2px solid #FFF0C6; border-radius:14px; font:bold 19px 'Segoe UI'; } QToolButton:focus { border:3px solid #C9B4F4; }")
+        self.badge.setGeometry(195, 3, 36, 36)
+        from PySide6.QtCore import QSize
+        self.badge.setIconSize(QSize(36, 36))
+        self.badge.setStyleSheet("QToolButton { background:transparent; border:none; } QToolButton:focus { border:2px solid #C9B4F4; border-radius:10px; }")
         self.badge.setAccessibleName("Unread task notifications")
         self.badge.setCursor(Qt.CursorShape.PointingHandCursor)
         self.badge.clicked.connect(self.controls.notification_requested.emit)
-        self.badge.hide()
+        self.set_notification_count(0)
+
+        self._expression_timer = QTimer(self)
+        self._expression_timer.setSingleShot(True)
+        self._expression_timer.timeout.connect(lambda: self.set_state(PetState.IDLE))
 
         self._animation = QTimer(self)
         self._animation.setTimerType(Qt.TimerType.PreciseTimer)
@@ -112,14 +123,18 @@ class PetWindow(QWidget):
             return
         self._pet_kind = pet_kind
         self.settings.setValue("pet", pet_kind.value)
+        self.set_notification_count(self._notification_count)
         self.update()
         self.pet_kind_changed.emit(pet_kind)
 
     def set_state(self, state: PetState) -> None:
-        self._state = state
-        self._last_activity = time.monotonic()
-        if state == PetState.HAPPY:
+        self._expression_timer.stop()
+        self._state = PetState(state)
+        self._last_activity = self._state_started = time.monotonic()
+        if self._state == PetState.HAPPY:
             self._reaction_at = time.monotonic() - self._clock
+        self.setAccessibleName(f"PetLink companion · {self._state.value}")
+        self.setToolTip(f"{self._state.value.title()} · Single click to type, double-click to open chat")
         self.update()
 
     def set_talking(self, talking: bool) -> None:
@@ -134,9 +149,13 @@ class PetWindow(QWidget):
         """Integration hook; call from Qt's UI thread when app events occur."""
         states = {"chat_opened": PetState.CURIOUS, "typing": PetState.CURIOUS,
                   "microphone_on": PetState.LISTENING, "thinking": PetState.THINKING,
-                  "task_completed": PetState.HAPPY, "reminder": PetState.HAPPY,
+                  "task_completed": PetState.HAPPY, "task_confirmed": PetState.HAPPY,
+                  "reminder": PetState.REMINDER, "confused": PetState.CONFUSED,
+                  "error": PetState.CONFUSED,
                   "finished": PetState.IDLE}
         self.set_state(states[event])
+        if event in ("task_completed", "task_confirmed", "reminder", "confused", "error"):
+            self._expression_timer.start(3200 if event == "reminder" else 2600)
 
     def _tick(self) -> None:
         t = time.monotonic() - self._clock
@@ -158,6 +177,10 @@ class PetWindow(QWidget):
             target = QPointF(math.sin(t * .7) * 3, -3)
         elif self._state == PetState.LISTENING:
             target = QPointF(0, -1)
+        elif self._state == PetState.SLEEPY:
+            target = QPointF(0, 0)
+        elif self._state == PetState.CONFUSED:
+            target = QPointF(math.sin((t - (self._state_started-self._clock))*2)*2, -1)
         self._gaze += (target - self._gaze) * .12
         target_angle = self._gaze.x() if self._hovered else self._tilt
         if self._state == PetState.CURIOUS:
@@ -184,6 +207,7 @@ class PetWindow(QWidget):
             self._state == PetState.SLEEPY or (
                 self._state == PetState.IDLE and time.monotonic() - self._last_activity > 120),
             self._speech_level,
+            state_age=time.monotonic()-self._state_started,
         )
         painter.end()
 
@@ -233,9 +257,15 @@ class PetWindow(QWidget):
             self.double_clicked.emit()
 
     def set_notification_count(self, count):
-        self.badge.setVisible(count > 0)
-        self.badge.setToolTip(f"{count} unread task notification(s). Click to read.")
-        self.controls.bell.setToolTip(f"Read notifications · {count} unread")
+        from .expressions import notification_icon
+        self._notification_count = max(0, int(count))
+        self.badge.setIcon(notification_icon(self._pet_kind.value))
+        self.badge.setVisible(self._notification_count > 0)
+        names = {PetKind.ANIME_AZURE: "Ishu's star", PetKind.ANIME_CORAL: "Coral's flower", PetKind.ANIMAL_CAT: "Lola's bell"}
+        description = f"{names[self._pet_kind]} · {self._notification_count} unread task notification(s). Click to read."
+        self.badge.setToolTip(description)
+        self.badge.setAccessibleName(description)
+        self.controls.bell.setToolTip(f"Read notifications · {self._notification_count} unread")
 
     def enterEvent(self, event) -> None:  # noqa: N802 - Qt API name
         self._hovered = True
@@ -252,6 +282,8 @@ class PetWindow(QWidget):
         menu = QMenu(self)
         menu.addAction("Open chat", self.chat_requested.emit)
         menu.addAction("Voice setup", self.voice_setup_requested.emit)
+        if self.tray_available:
+            menu.addAction("Hide pet to tray", self.hide_requested.emit)
         menu.addSeparator()
         pets = menu.addMenu("Choose pet")
         group = QActionGroup(pets)

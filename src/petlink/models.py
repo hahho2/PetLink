@@ -12,7 +12,15 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Mapping, Protocol, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener, HTTPRedirectHandler
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # A service redirect must never forward credentials or chat.
+
+
+urlopen = build_opener(NoRedirect()).open
 
 
 class ModelError(RuntimeError):
@@ -31,9 +39,9 @@ class ModelConfig:
 
     base_url: str
     model: str
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)
     timeout_seconds: float = 60.0
-    temperature: float = 0.2
+    temperature: float | None = 0.2
     max_tokens: int | None = None
     extra: Mapping[str, Any] = field(default_factory=dict)
 
@@ -103,6 +111,7 @@ class OpenAICompatibleProvider:
         payload = self._payload(messages, response_format=response_format)
         payload["stream"] = True
         request = self._request_object("/chat/completions", payload)
+        answer_received = False
         try:
             with urlopen(request, timeout=self.config.timeout_seconds) as response:
                 for raw_line in response:
@@ -124,7 +133,11 @@ class OpenAICompatibleProvider:
                         if content is not None:
                             if not isinstance(content, str):
                                 raise ModelError("The model returned non-text content")
+                            answer_received = answer_received or bool(content.strip())
                             yield content
+                        if choices[0].get("finish_reason") == "length":
+                            raise ModelError("The model reached its output limit; the answer is incomplete. Try a shorter response."
+                                if answer_received else "The model used its output limit without returning answer text. Try a shorter question or enable Skip extended thinking for local Ollama.")
                     except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
                         raise ModelError("The model returned an invalid stream chunk") from exc
         except (HTTPError, URLError, TimeoutError) as exc:
@@ -146,9 +159,10 @@ class OpenAICompatibleProvider:
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
-            "temperature": self.config.temperature,
             **self.config.extra,
         }
+        if self.config.temperature is not None:
+            payload["temperature"] = self.config.temperature
         if self.config.max_tokens is not None:
             payload["max_tokens"] = self.config.max_tokens
         if response_format is not None:
@@ -194,23 +208,33 @@ class GoogleGeminiProvider:
         response_format: Mapping[str, Any] | None = None,
     ) -> ModelResponse:
         contents = []
+        system = []
         for message in messages:
+            if message.role == "system":
+                system.append({"text": message.content})
+                continue
             role = "user" if message.role == "user" else "model"
             contents.append({"role": role, "parts": [{"text": message.content}]})
         body: dict[str, Any] = {"contents": contents}
-        body["generationConfig"] = {"temperature": self.config.temperature}
+        body["generationConfig"] = {}
+        if system:
+            body["systemInstruction"] = {"parts": system}
+        if self.config.temperature is not None:
+            body["generationConfig"]["temperature"] = self.config.temperature
+        if self.config.max_tokens is not None:
+            body["generationConfig"]["maxOutputTokens"] = self.config.max_tokens
         if response_format and response_format.get("type") == "json_object":
             body["generationConfig"]["responseMimeType"] = "application/json"
 
-        url = f"{self.config.base_url.rstrip('/')}/v1beta/models/{self.config.model}:generateContent?key={self.config.api_key or ''}"
-        request = Request(url, data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+        url = f"{self.config.base_url.rstrip('/')}/v1beta/models/{self.config.model}:generateContent"
+        request = Request(url, data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json", "x-goog-api-key": self.config.api_key or ""}, method="POST")
         try:
             with urlopen(request, timeout=self.config.timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise ModelError("Could not reach the Google Gemini API") from exc
         try:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            text = "".join(part.get("text", "") for part in data["candidates"][0]["content"]["parts"] if not part.get("thought"))
         except (KeyError, IndexError, TypeError) as exc:
             raise ModelError("Google Gemini returned an invalid response") from exc
         return ModelResponse(text=text, model=self.config.model, raw=data)
@@ -220,9 +244,12 @@ class GoogleGeminiProvider:
 
     def health_check(self) -> bool:
         try:
-            self.complete([ChatMessage("user", "Reply with OK")])
-            return True
-        except ModelError:
+            request = Request(f"{self.config.base_url.rstrip('/')}/v1beta/models/{self.config.model}",
+                              headers={"x-goog-api-key": self.config.api_key or ""})
+            with urlopen(request, timeout=self.config.timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+                return isinstance(data, dict) and bool(data.get("name"))
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError):
             return False
 
 

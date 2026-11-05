@@ -1,5 +1,6 @@
 """Manual task drafts: review before any change reaches the task table."""
 import json
+from datetime import datetime, timezone
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
@@ -8,7 +9,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QHBoxLayout, QLa
 from sqlalchemy.exc import SQLAlchemyError
 
 from .ui_theme import stylesheet
-from .scheduling import DEFAULT_SCHEDULE
+from .scheduling import DEFAULT_SCHEDULE, one_month_end, task_status_label
 
 FIELDS = ("title", "description", "status", "priority", "due_date", "schedule")
 DEFAULTS = dict(title="", description="", status="pending", priority="normal", due_date=None)
@@ -24,11 +25,11 @@ def summary(actions):
         else:
             values = action["values"]
             parts.append(f"{action['kind'].title()} task: {values['title']}\n"
-                f"Status: {values['status'].replace('_', ' ')} · Priority: {values['priority']}\n"
+                f"Status: {task_status_label({**values, 'schedule': {**DEFAULT_SCHEDULE, **values.get('schedule', {})}})} · Priority: {values['priority']}\n"
                 f"Due: {values['due_date'] or 'Not set'}\n{values['description']}")
             schedule = values.get("schedule")
             if schedule:
-                parts[-1] += f"\nRepeat: {schedule['frequency']}\nReminder: {schedule['reminder_time'] or ('00:00 on each occurrence' if schedule['frequency'] != 'none' else 'None')} · {schedule['timezone']}"
+                parts[-1] += f"\nRepeat: {schedule['frequency']}\nEnds: {schedule.get('end_date') or 'No end date'} (inclusive)\nReminder: {schedule['reminder_time'] or ('00:00 on each occurrence' if schedule['frequency'] != 'none' else 'None')} · {schedule['timezone']}"
                 if schedule["frequency"] != "none":
                     parts[-1] += "\nConfirming authorizes future occurrences. Setting the whole task Done stops the series."
             if values["status"] == "done":
@@ -41,11 +42,12 @@ class TaskEditor(QDialog):
         super().__init__(parent)
         self.setObjectName("chat")
         self.database, self.pending = database, pending
+        self.saved_pending = None
         self.action = action or {"kind": "create"}
         values = self.action.get("values", DEFAULTS)
         self.setWindowTitle("Review task draft")
         self.setStyleSheet(stylesheet())
-        self.resize(460, 620)
+        self.resize(460, 680)
         layout = QVBoxLayout(self)
         note = QLabel("This is a draft. Review it before confirming a saved task.")
         note.setWordWrap(True)
@@ -69,6 +71,12 @@ class TaskEditor(QDialog):
         for label, value in (("Does not repeat", "none"), ("Every day", "daily"), ("Every week", "weekly")):
             self.frequency.addItem(label, value)
         self.frequency.setCurrentIndex(self.frequency.findData(schedule["frequency"]))
+        self.end_date = QLineEdit(schedule.get("end_date") or "")
+        self.end_date.setPlaceholderText("YYYY-MM-DD, inclusive; empty means no end")
+        self.end_date.setAccessibleName("Repeat end date")
+        self.month = QPushButton("One month")
+        self.month.setToolTip("Fill an inclusive calendar-month end date from the start date. Review the exact date before confirming.")
+        self.month.clicked.connect(self.fill_month)
         self.reminder_time = QLineEdit(schedule["reminder_time"] or "")
         self.reminder_time.setPlaceholderText("HH:MM (24-hour), e.g. 18:30")
         self.timezone = QLineEdit(schedule["timezone"])
@@ -79,7 +87,13 @@ class TaskEditor(QDialog):
             control.setAccessibleName(label)
             form.addRow(label, control)
         layout.addLayout(form)
-        schedule_note = QLabel("Repeats are anchored to the start date. Blank time on a repeat means midnight. Reminders run while PetLink is open.")
+        end_row = QHBoxLayout()
+        end_row.addWidget(self.end_date, 1)
+        end_row.addWidget(self.month)
+        form.addRow("Repeat until", end_row)
+        self.frequency.currentIndexChanged.connect(self.update_repeat_controls)
+        self.update_repeat_controls()
+        schedule_note = QLabel("Each repeated date has its own completion status. The series stops creating dates after its end date. Blank repeat time means midnight.")
         schedule_note.setWordWrap(True)
         layout.addWidget(schedule_note)
         self.error = QLabel()
@@ -96,17 +110,34 @@ class TaskEditor(QDialog):
         actions.addWidget(review)
         layout.addLayout(actions)
 
+    def update_repeat_controls(self, *args):
+        repeating = self.frequency.currentData() != "none"
+        self.end_date.setEnabled(repeating)
+        self.month.setEnabled(repeating)
+        self.status.setItemText(0, "Active series" if repeating else "Pending")
+        self.status.setItemText(2, "Stop series" if repeating else "Done")
+
+    def fill_month(self):
+        try:
+            self.end_date.setText(one_month_end(self.due.text().strip()))
+            self.error.clear()
+        except (ValueError, OverflowError):
+            self.error.setText("Enter a valid start date first, then choose One month.")
+            self.due.setFocus()
+
     def submit(self):
         action = {**self.action, "values": dict(title=self.title.text().strip(),
             description=self.description.toPlainText(), status=self.status.currentData(),
             priority=self.priority.currentText(), due_date=self.due.text().strip() or None,
             schedule=dict(frequency=self.frequency.currentData(), reminder_time=self.reminder_time.text().strip() or None,
-                          timezone=self.timezone.text().strip()))}
+                          timezone=self.timezone.text().strip(),
+                          end_date=(self.end_date.text().strip() or None) if self.frequency.currentData() != "none" else None))}
         try:
             if self.pending:
                 self.database.revise(self.pending["id"], self.pending["revision"], [action])
+                self.saved_pending = dict(id=self.pending["id"], revision=self.pending["revision"] + 1)
             else:
-                self.database.propose([action])
+                self.saved_pending = dict(id=self.database.propose([action]), revision=1)
         except (ValueError, SQLAlchemyError) as exc:
             self.error.setText(str(exc) if isinstance(exc, ValueError) else "Could not save the draft. Your fields are still here; try again.")
             self.title.setFocus()
@@ -166,7 +197,7 @@ class TaskWindow(QWidget):
         self.preview.setMaximumHeight(150)
         layout.addWidget(self.preview)
         actions = QHBoxLayout()
-        self.edit = QPushButton("Edit draft")
+        self.edit = QPushButton("Resume draft")
         self.edit.clicked.connect(self.edit_draft)
         self.discard = QPushButton("Discard draft")
         self.discard.clicked.connect(self.discard_draft)
@@ -193,7 +224,11 @@ class TaskWindow(QWidget):
             for task in rows[:self._limit]:
                 schedule = task["schedule"]
                 clock = schedule["reminder_time"] or ("00:00" if schedule["frequency"] != "none" else "Not set")
-                item = QListWidgetItem(f"#{task['id']}  {task['title']}\n{task['status'].replace('_', ' ')} · {task['priority']} · Due: {task['due_date'] or 'Not set'}\nRepeat: {schedule['frequency']} · Reminder: {clock}")
+                caption = f"#{task['id']}  {task['title']}\n{task_status_label(task)} · {task['priority']} · Start/due: {task['due_date'] or 'Not set'}\nRepeat: {schedule['frequency']} · Reminder: {clock}"
+                if schedule["frequency"] != "none":
+                    progress = task["progress"]
+                    caption += f"\nEnds: {schedule.get('end_date') or 'No end date'} · Done: {progress['completed']} / {progress['planned'] if progress['planned'] is not None else progress['recorded']} {'planned' if progress['planned'] is not None else 'recorded'} occurrences"
+                item = QListWidgetItem(caption)
                 item.setData(Qt.ItemDataRole.UserRole, task)
                 self.tasks.addItem(item)
             self.pending.clear()
@@ -201,6 +236,7 @@ class TaskWindow(QWidget):
             more_pending = len(proposals) > self._pending_limit
             for pending in proposals[:self._pending_limit]:
                 item = QListWidgetItem(summary(json.loads(pending["payload"])).split("\n")[0])
+                item.setText(item.text() + "\nWaiting for confirmation")
                 item.setData(Qt.ItemDataRole.UserRole, pending)
                 self.pending.addItem(item)
                 if selected and pending["id"] == selected["id"]:
@@ -210,7 +246,7 @@ class TaskWindow(QWidget):
             self.occurrences.clear()
             occurrences = self.database.occurrences(limit=self._occurrence_limit + 1)
             for occurrence in occurrences[:self._occurrence_limit]:
-                label = "Done" if occurrence["completed_at"] else "Pending"
+                label = "Done" if occurrence["completed_at"] else ("Overdue" if occurrence["reminder_at"] < datetime.now(timezone.utc).isoformat(timespec="microseconds") else "Pending")
                 item = QListWidgetItem(f"{occurrence['title']} — {occurrence['scheduled_date']}\n{label} · {occurrence['local_time'] or '00:00'} · {occurrence['timezone']}")
                 item.setData(Qt.ItemDataRole.UserRole, occurrence)
                 self.occurrences.addItem(item)
@@ -243,6 +279,7 @@ class TaskWindow(QWidget):
             if self.pending.count():
                 self.pending.setCurrentRow(0)
             self.feedback.setText("Draft saved locally. Review it, then confirm to change tasks.")
+            return dialog.saved_pending
 
     def new_task(self):
         self._open_editor()

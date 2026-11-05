@@ -1,7 +1,7 @@
 """Shared desktop UI tokens. DESIGN.md documents this runtime source."""
-COLORS = dict(background="#242333", surface="#302E43", field="#1D1C2B",
-              text="#F4EFFA", muted="#C2BBD3", primary="#C9B4F4",
-              border="#56516D", error="#FFC0CC")
+COLORS = dict(background="#161923", surface="#222735", field="#11151D",
+              text="#F0F2F7", muted="#A9B1C4", primary="#B7A9EB",
+              border="#414A5D", error="#FFA8B8", success="#92D4B1", warning="#E7C17B")
 
 
 def stylesheet():
@@ -33,6 +33,11 @@ def stylesheet():
     QWidget#messages {{ background: transparent; }}
     QFrame#bubble {{ background: {c['surface']}; border-radius: 10px; }}
     QLabel#speaker {{ color: {c['primary']}; font-size: 12px; font-weight: 600; }}
+    QFrame#assistantBubble {{ background: {c['surface']}; border-radius: 14px; }}
+    QFrame#userBubble {{ background: #2D3347; border-radius: 14px; }}
+    QFrame#draftCard {{ background: {c['surface']}; border: 1px solid {c['primary']}; border-radius: 14px; padding: 12px; }}
+    QLabel#cardTitle {{ font-size: 18px; font-weight: 600; }}
+    QPushButton#quiet {{ border: none; background: transparent; font-size: 12px; padding: 2px 8px; }}
     QScrollBar:vertical {{ background: {c['background']}; width: 12px; margin: 0; }}
     QScrollBar::handle:vertical {{ background: {c['border']}; min-height: 24px; border-radius: 5px; }}
     QScrollBar::handle:vertical:hover {{ background: {c['primary']}; }}

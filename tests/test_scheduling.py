@@ -177,7 +177,7 @@ class ScheduleUITests(unittest.TestCase):
         from petlink.chat_window import ChatWindow, CompanionController
         settings = QSettings(str(Path(self.folder.name) / "settings.ini"), QSettings.Format.IniFormat)
         pet = PetWindow(settings=settings)
-        chat = ChatWindow(database=self.db)
+        chat = ChatWindow(database=self.db, settings=settings)
         controller = CompanionController(pet, chat=chat, database=self.db)
         heartbeats = []
         QTimer.singleShot(20, lambda: heartbeats.append(True))

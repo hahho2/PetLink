@@ -91,7 +91,7 @@ class PetInteractionTests(unittest.TestCase):
 
     def test_single_click_types_double_click_opens_app(self):
         pet = PetWindow(settings=self.settings)
-        chat = ChatWindow(database=self.db)
+        chat = ChatWindow(database=self.db, settings=self.settings)
         controller = CompanionController(pet, chat=chat, database=self.db)
         pet.show()
         QTest.mouseClick(pet, Qt.MouseButton.LeftButton, pos=QPoint(120, 105))
@@ -112,7 +112,7 @@ class PetInteractionTests(unittest.TestCase):
 
     def test_voice_transcript_is_draft_not_automatic_send(self):
         pet = PetWindow(settings=self.settings)
-        chat = ChatWindow(database=self.db)
+        chat = ChatWindow(database=self.db, settings=self.settings)
         controller = CompanionController(pet, chat=chat, database=self.db)
         self.assertFalse(controller.voice.recording)
         controller.voice.text.emit("Create a study task")

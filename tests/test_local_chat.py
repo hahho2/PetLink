@@ -6,6 +6,9 @@ import json
 from threading import Thread
 import time
 import unittest
+import tempfile
+from pathlib import Path
+from PySide6.QtCore import QSettings
 
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
@@ -30,6 +33,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "text/event-stream")
         self.end_headers()
         events = ([{"error": {"message": "model missing"}}] if payload["model"] == "missing" else
+                  [{"choices": [{"delta": {"reasoning_content": "internal thinking"}, "finish_reason": "length"}]}] if payload["model"] == "limited" else
+                  [{"choices": [{"delta": {"reasoning_content": "internal thinking"}}]}] if payload["model"] == "thinking-only" else
                   [{"choices": []}, {"choices": [{"delta": {"role": "assistant"}}]},
                    {"choices": [{"delta": {"content": "Plan: focus for 25 minutes."}}]}])
         for event in events:
@@ -38,6 +43,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 class LocalChatTests(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self.folder.cleanup)
+        self.settings = QSettings(str(Path(self.folder.name) / "settings.ini"), QSettings.Format.IniFormat)
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
@@ -50,7 +60,7 @@ class LocalChatTests(unittest.TestCase):
         cls.server.server_close()
 
     def test_real_stream_and_server_error_recovery(self):
-        chat = ChatWindow()
+        chat = ChatWindow(settings=self.settings)
         chat.address.setText(f"http://127.0.0.1:{self.server.server_port}/v1")
         for model, expected in (("missing", "did not finish"), ("fixture", "Ready")):
             chat.model.setText(model)
@@ -65,6 +75,38 @@ class LocalChatTests(unittest.TestCase):
         path, payload = Handler.requests[-1]
         self.assertEqual(path, "/v1/chat/completions")
         self.assertEqual(payload["messages"][0]["role"], "system")
+        chat.shutdown()
+        chat.hide()
+        chat.deleteLater()
+
+    def test_reasoning_only_response_explains_how_to_retry(self):
+        chat = ChatWindow(settings=self.settings)
+        chat.address.setText(f"http://127.0.0.1:{self.server.server_port}")
+        chat.model.setText("thinking-only")
+        chat.composer.setPlainText("Help me plan")
+        chat.send()
+        deadline = time.monotonic() + 3
+        while chat._busy and time.monotonic() < deadline:
+            QTest.qWait(10)
+        self.assertFalse(chat._busy)
+        self.assertIn("Skip extended thinking", chat.status.text())
+        self.assertEqual([m.role for m in chat.history], ["user"])
+        chat.shutdown()
+        chat.hide()
+        chat.deleteLater()
+
+    def test_empty_answer_due_to_output_limit_reports_the_actual_cause(self):
+        chat = ChatWindow(settings=self.settings)
+        chat.address.setText(f"http://127.0.0.1:{self.server.server_port}")
+        chat.model.setText("limited")
+        chat.composer.setPlainText("Give me a work tip")
+        chat.send()
+        deadline = time.monotonic() + 3
+        while chat._busy and time.monotonic() < deadline:
+            QTest.qWait(10)
+        self.assertFalse(chat._busy)
+        self.assertIn("output limit", chat.status.text())
+        self.assertEqual([m.role for m in chat.history], ["user"])
         chat.shutdown()
         chat.hide()
         chat.deleteLater()

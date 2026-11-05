@@ -1,5 +1,31 @@
 # Animated companions
 
+## Expressive character reactions
+
+Right-click → Preview expression now includes Idle, Talking, Listening, Thinking,
+Curious, Confused, Happy, Sleepy and Reminder. The character art is unchanged;
+`expressions.py` adds Qt vector symbols and character-specific motion profiles.
+
+Ishu celebrates with two energetic hops and stars, thinks with a dotted cloud,
+and uses a star notification badge. Coral has smaller hops, cheek-level hands,
+heart accents/thoughts and a flower badge. Lola pounces, shows paw pads, flicks
+her tail, thinks about a fish, and uses a golden bell instead of an exclamation.
+Sleep closes the eyes, relaxes posture, adds z/z/Z and an expanding nose bubble.
+Confusion uses question marks, asymmetrical eyebrows, and different ear/tilt or
+sweat-drop reactions. Listening/talking show small sound bars.
+
+Task confirmations and reminders trigger bounded reactions that settle to Idle.
+Active thinking/listening takes priority over incidental celebrations. Preview
+states can be held explicitly; selecting another state cancels an old reaction's
+settling timer. Reduced motion keeps static symbols/faces and disables hops,
+tilt, tail/ear rotation and floating/pulsing effects. Mouth motion without live
+audio remains a synthetic preview; actual audio envelopes are still supported.
+
+Unread symbols remain clickable and switch correctly when changing characters;
+their tooltip and accessible name include the unread count. Emotion symbols do
+not create notifications or acknowledge tasks. `tests/preview_expressions.py`
+renders the real Qt character/state contact sheet without a model or user data.
+
 Run `run_petlink.bat`, or set `PYTHONPATH` to `src` and run `python -m petlink`.
 Right-click for Coral, Ishu or Lola, expression previews, reduced motion and Exit.
 Selection, position and reduced motion are saved through Windows QSettings.

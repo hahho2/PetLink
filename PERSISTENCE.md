@@ -45,9 +45,15 @@ files, not silently edited for existing databases.
 
 ## Boundaries and verification
 
+General task/schedule/reminder questions use Database.task_overview for a bounded
+read of confirmed unfinished records plus a separate pending-draft count. They
+do not poll schedules, create occurrences, mark alerts read or confirm changes.
+The response is persisted as ordinary chat; save retries reuse the same answer.
+
 This milestone does not implement goals, custom metrics,
-LLM task parsing, cloud sync, backup/restore UI or deletion of audit history.
-The AI remains a chat/planning interface; it cannot execute or claim saved tasks.
+cloud sync, backup/restore UI or deletion of audit history.
+Model-assisted new-task parsing and corrections produce reviewed drafts only;
+the AI cannot execute or claim saved task changes.
 The task form works without a model running. Persistence is on local disk; no
 encryption-at-rest mechanism is added by this implementation.
 
@@ -60,11 +66,23 @@ Migration 003 adds confirmed one-off/daily/weekly schedules, separate occurrence
 UTC reminder instants and completion history. Notification event keys prevent
 repeated delivery across restarts. See REMINDERS.md for timing and catch-up bounds.
 
+Migration 004 adds inclusive recurrence end dates without resetting existing
+rules. End-only edits preserve occurrence IDs/completions. Confirmed completion
+acknowledges the matching alert atomically; other occurrences are unaffected.
+
+Migration 005 adds conversations.task_context with an empty default, preserving
+existing chat, composer text and pending proposals. It stores one bounded task
+question/history, draft fields and exact pending ID/revision independently of
+ordinary chat. Context updates do not create tasks or pending actions. A reviewed
+correction uses the existing revision-checked revise operation and must be
+confirmed again. Starting a separate request clears context only. A local save
+failure preserves the previous context; no generated correction is applied.
+
 Tests use disposable databases and a loopback model fixture. They cover migration
 reopen, foreign keys, restart recovery, proposal edits, stale revisions, duplicate
 confirmation, rollback with no audit leakage, soft removal, chat save failures,
 retry-save without duplicate inference and the existing pet/chat behavior.
 
-Ponytail keeps this milestone to one service and one migration. Graphify's source
+Ponytail keeps persistence in the existing database service. Graphify's source
 map is refreshed in `src/graphify-out/`; it maps code relationships, not all asset
 or business-document semantics. No cloud graph backend is required.

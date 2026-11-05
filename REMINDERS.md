@@ -5,6 +5,13 @@ Repeat (none/daily/weekly), optional HH:MM reminder time, and timezone.
 Asia/Kolkata is visibly prefilled and editable. Review draft → Confirm changes.
 Unconfirmed proposals do not schedule anything.
 
+For a month-long daily task, choose Every day, enter the start date and press
+One month. Review the exact Repeat until date before confirming. End dates are
+inclusive: November 1–30 produces 30 daily occurrences. November 4 starts a
+calendar-month span ending December 3. Month-end dates clamp to the next month's
+valid date before subtracting a day (January 31 → February 27 in a non-leap year).
+You can type another end date or leave it empty for an open-ended series.
+
 One-off reminders require a date and time. Repeats follow the local calendar,
 anchored to the start date; a blank repeat time means midnight, shown in preview.
 Plain date-only tasks retain their existing local-day due alert.
@@ -18,6 +25,17 @@ set Status to Done, review and confirm. Remove soft-removes the task and cancels
 pending occurrences. Changing a schedule cancels unfinished old-rule dates while
 retaining completed history. The view shows the current schedule; old history is
 retained in SQLite for later analytics.
+
+Recurring parents are labeled Scheduled series, Active series, Ended series or
+Stopped series. Individual dates are Pending, Overdue or Done. Bounded schedules
+show completed occurrences against their planned total. Ending stops new dates;
+it does not mark missed work completed. Earlier overdue dates remain actionable.
+
+Confirming completion acknowledges only that occurrence's alert in the same
+transaction. Other unread days remain. Stopping/removing the whole task clears
+its alerts; shrinking the end date clears alerts for cancelled dates. Reading an
+alert alone does not complete work. End-only edits preserve existing occurrence
+IDs and completion history rather than restarting the series.
 
 ## Timing
 
@@ -33,9 +51,11 @@ are stored in UTC; dates remain local calendar dates. Python's
 [zoneinfo](https://docs.python.org/3/library/zoneinfo.html) and tzdata supply
 timezone rules on Windows. In a repeated clock hour the first instance is used;
 skipped times move forward to the next valid local minute. Tests cover both.
+Migration 004 adds a nullable inclusive end date, preserving old schedules,
+completed records and pending proposals that lack the new optional field.
 
 These are minute-polled notifications, not hard real-time alarms. Monthly/custom
-rules, end dates, snooze, sounds and background execution while the app is closed
+rules, snooze, sounds and background execution while the app is closed
 are not implemented. The LLM still cannot execute task changes.
 
 Run `.\.venv\Scripts\python.exe -m unittest discover -s tests -p "test_*.py"`.

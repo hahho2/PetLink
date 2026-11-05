@@ -44,6 +44,8 @@ class NotificationWindow(QWidget):
 
     def refresh(self):
         try:
+            previous = self.items.currentItem()
+            selected_id = previous.data(Qt.ItemDataRole.UserRole)["id"] if previous else None
             self.items.clear()
             rows = self.database.notifications(limit=self._limit + 1)
             self.more.setVisible(len(rows) > self._limit)
@@ -51,8 +53,10 @@ class NotificationWindow(QWidget):
                 item = QListWidgetItem(("Unread · " if row["read_at"] is None else "Read · ") + row["statement"].split(" — ")[0])
                 item.setData(Qt.ItemDataRole.UserRole, row)
                 self.items.addItem(item)
+                if row["id"] == selected_id:
+                    self.items.setCurrentItem(item)
             self.status.setText(f"Showing the latest {self.items.count()} notifications." if self.items.count() else "No task notifications yet.")
-            if self.items.count():
+            if self.items.count() and self.items.currentItem() is None:
                 self.items.setCurrentRow(0)
             self.select()
         except SQLAlchemyError:

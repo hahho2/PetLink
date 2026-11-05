@@ -1,13 +1,36 @@
 """Deterministic calendar recurrence and UTC reminder delivery."""
 from datetime import date, datetime, time, timedelta, timezone
+import calendar
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from sqlalchemy import text
 
-DEFAULT_SCHEDULE = dict(frequency="none", reminder_time=None, timezone="Asia/Kolkata")
+DEFAULT_SCHEDULE = dict(frequency="none", reminder_time=None, timezone="Asia/Kolkata", end_date=None)
+
+
+def one_month_end(start):
+    """Inclusive end of a calendar-month span; the exact date is reviewed in UI."""
+    start = date.fromisoformat(start)
+    year, month = (start.year + 1, 1) if start.month == 12 else (start.year, start.month + 1)
+    return (date(year, month, min(start.day, calendar.monthrange(year, month)[1])) - timedelta(days=1)).isoformat()
+
+
+def task_status_label(task, now=None):
+    schedule = task["schedule"]
+    if schedule["frequency"] == "none":
+        return task["status"].replace("_", " ").title()
+    if task["status"] == "done":
+        return "Stopped series"
+    today = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(schedule["timezone"])).date().isoformat()
+    if schedule.get("end_date") and today > schedule["end_date"]:
+        return "Ended series"
+    if task.get("due_date") and today < task["due_date"]:
+        return "Scheduled series"
+    return "Active series"
 
 
 def validate_schedule(schedule, due_date):
-    if not isinstance(schedule, dict) or set(schedule) != set(DEFAULT_SCHEDULE):
+    required = set(DEFAULT_SCHEDULE) - {"end_date"}
+    if not isinstance(schedule, dict) or not required <= set(schedule) or set(schedule) - set(DEFAULT_SCHEDULE):
         raise ValueError("Review frequency, reminder time and timezone.")
     if schedule["frequency"] not in ("none", "daily", "weekly"):
         raise ValueError("Choose no repeat, daily or weekly.")
@@ -24,6 +47,17 @@ def validate_schedule(schedule, due_date):
         raise ValueError("Enter a timezone name such as Asia/Kolkata or UTC.")
     if (clock is not None or schedule["frequency"] != "none") and not due_date:
         raise ValueError("Set a due/start date for a reminder or recurring task.")
+    end = schedule.get("end_date")
+    if end is not None:
+        try:
+            if date.fromisoformat(end).isoformat() != end:
+                raise ValueError()
+        except (TypeError, ValueError):
+            raise ValueError("Use YYYY-MM-DD for the end date, or leave it empty.")
+        if schedule["frequency"] == "none" or not due_date:
+            raise ValueError("An end date requires a daily or weekly repeat with a start date.")
+        if end < due_date:
+            raise ValueError("The end date cannot be before the start date.")
 
 
 def reminder_utc(day, clock, zone):
@@ -50,13 +84,20 @@ def add_occurrence(conn, task_id, schedule, revision, day):
 
 
 def save_schedule(conn, task_id, schedule, due_date, now, *, reset=False):
+    schedule = {**DEFAULT_SCHEDULE, **schedule}
     old = conn.execute(text("SELECT * FROM task_schedules WHERE task_id=:id"), {"id": task_id}).mappings().first()
-    same = old is not None and all(old[key] == schedule[key] for key in DEFAULT_SCHEDULE)
+    same = old is not None and all(old[key] == schedule[key] for key in DEFAULT_SCHEDULE if key != "end_date")
     if same and not reset:
+        if old["end_date"] != schedule["end_date"]:
+            conn.execute(text("UPDATE task_schedules SET end_date=:end WHERE task_id=:id"), {"end": schedule["end_date"], "id": task_id})
+            conn.execute(text("UPDATE task_occurrences SET cancelled_at=CASE WHEN :end IS NOT NULL AND scheduled_date>:end THEN :now ELSE NULL END WHERE task_id=:id AND schedule_revision=:revision AND completed_at IS NULL"),
+                         {"end": schedule["end_date"], "now": now, "id": task_id, "revision": old["revision"]})
+            conn.execute(text("UPDATE notifications SET read_at=:now WHERE read_at IS NULL AND event_key IN (SELECT 'occurrence:' || id FROM task_occurrences WHERE task_id=:id AND cancelled_at IS NOT NULL)"), {"id": task_id, "now": now})
         return
     revision = old["revision"] + 1 if old else 1
     conn.execute(text("UPDATE task_occurrences SET cancelled_at=:now WHERE task_id=:id AND completed_at IS NULL AND cancelled_at IS NULL"), {"id": task_id, "now": now})
-    conn.execute(text("INSERT INTO task_schedules(task_id,frequency,reminder_time,timezone,revision) VALUES(:id,:frequency,:reminder_time,:timezone,:revision) ON CONFLICT(task_id) DO UPDATE SET frequency=excluded.frequency,reminder_time=excluded.reminder_time,timezone=excluded.timezone,revision=excluded.revision"),
+    conn.execute(text("UPDATE notifications SET read_at=:now WHERE read_at IS NULL AND event_key IN (SELECT 'occurrence:' || id FROM task_occurrences WHERE task_id=:id AND cancelled_at IS NOT NULL)"), {"id": task_id, "now": now})
+    conn.execute(text("INSERT INTO task_schedules(task_id,frequency,reminder_time,timezone,revision,end_date) VALUES(:id,:frequency,:reminder_time,:timezone,:revision,:end_date) ON CONFLICT(task_id) DO UPDATE SET frequency=excluded.frequency,reminder_time=excluded.reminder_time,timezone=excluded.timezone,revision=excluded.revision,end_date=excluded.end_date"),
         dict(id=task_id, revision=revision, **schedule))
     if due_date and (schedule["frequency"] != "none" or schedule["reminder_time"]):
         add_occurrence(conn, task_id, schedule, revision, date.fromisoformat(due_date))
@@ -80,9 +121,10 @@ def poll_schedules(conn, now):
             except OverflowError:
                 continue
         today = now.astimezone(ZoneInfo(schedule["timezone"])).date()
+        until = min(today, date.fromisoformat(schedule["end_date"])) if schedule["end_date"] else today
         # Bounded catch-up retains progress across polls; no missing day is marked complete.
         for _ in range(100):
-            if day > today:
+            if day > until:
                 break
             add_occurrence(conn, schedule["task_id"], schedule, schedule["revision"], day)
             if schedule["frequency"] == "none":
@@ -91,7 +133,7 @@ def poll_schedules(conn, now):
                 day += timedelta(days=step)
             except OverflowError:
                 break
-    due = conn.execute(text("SELECT o.id,o.task_id,o.scheduled_date,t.title,s.timezone,s.reminder_time FROM task_occurrences o JOIN tasks t ON t.id=o.task_id JOIN task_schedules s ON s.task_id=t.id AND s.revision=o.schedule_revision WHERE o.cancelled_at IS NULL AND o.completed_at IS NULL AND o.reminder_at<=:now AND t.deleted_at IS NULL AND t.status!='done' AND NOT EXISTS(SELECT 1 FROM notifications n WHERE n.event_key='occurrence:' || o.id) ORDER BY o.reminder_at,o.id LIMIT 1000"), {"now": now.isoformat(timespec="microseconds")}).mappings()
+    due = conn.execute(text("SELECT o.id,o.task_id,o.scheduled_date,t.title,s.timezone,s.reminder_time FROM task_occurrences o JOIN tasks t ON t.id=o.task_id JOIN task_schedules s ON s.task_id=t.id AND s.revision=o.schedule_revision WHERE o.cancelled_at IS NULL AND o.completed_at IS NULL AND o.reminder_at<=:now AND t.deleted_at IS NULL AND t.status!='done' AND (s.end_date IS NULL OR o.scheduled_date<=s.end_date) AND NOT EXISTS(SELECT 1 FROM notifications n WHERE n.event_key='occurrence:' || o.id) ORDER BY o.reminder_at,o.id LIMIT 1000"), {"now": now.isoformat(timespec="microseconds")}).mappings()
     added = 0
     for occurrence in due:
         statement = f"{occurrence['title']} — reminder for {occurrence['scheduled_date']} {occurrence['reminder_time'] or '00:00'} ({occurrence['timezone']}). Review this occurrence in Tasks & Pending."
