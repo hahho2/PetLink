@@ -77,3 +77,5 @@ See [pet/chat usage](PET_WINDOW.md), [persistence](PERSISTENCE.md),
 
 Tests use disposable databases, simulated clocks and a loopback server. They
 do not record the microphone or require a paid API.
+
+<!-- streak update: 2026-11-05 -->
