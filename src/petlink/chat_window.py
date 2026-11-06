@@ -753,6 +753,7 @@ class CompanionController(QObject):
         self.voice = VoiceInput(pet.settings, self)
         self.voice.busy.connect(self._voice_busy)
         self.voice.status.connect(pet.controls.message)
+        self.voice.status.connect(self.chat.status.setText)
         self.voice.text.connect(self._voice_text)
         pet.controls.voice_requested.connect(self.voice_command)
         pet.voice_setup_requested.connect(self.voice_setup)
@@ -879,10 +880,14 @@ class CompanionController(QObject):
     def _voice_text(self, text):
         existing = self.chat.composer.toPlainText().strip()
         combined = (existing + " " + text).strip() if existing else text
-        if len(combined) > 6000:
+        if self.chat.isVisible() or len(combined) > 6000:
             self.chat.composer.setPlainText(combined)
             self.show_chat()
-            self.pet.controls.message("Transcript is long. Review and shorten it in chat before sending.")
+            self.chat.composer.setFocus()
+            message = ("Transcript is long. Review and shorten it in chat before sending."
+                       if len(combined) > 6000 else "Review the transcript, then send or draft a task.")
+            self.chat.status.setText(message)
+            self.pet.controls.message(message)
         else:
             self.pet.controls.show_text(combined)
             self.pet.controls.message("Review voice text before sending.")

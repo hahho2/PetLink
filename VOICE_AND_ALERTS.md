@@ -30,6 +30,14 @@ Transcribed text becomes an editable draft; it is never sent or executed
 automatically. Review it, then send. Voice and model generation are gated so
 they do not run together. Silence may still produce incorrect transcription.
 
+In chat, click Mic, speak, and click Stop mic. Listening/transcription status
+appears in chat. The transcript appends to existing composer text for review;
+Send uses the selected model or the existing local task-request route. Draft
+task from message explicitly interprets a task; Confirm changes activates it.
+When chat is hidden, the pet microphone keeps its quick-input review flow.
+Whisper handles speech only; it shares no weights with the selected reasoning
+model and needs no API key.
+
 If recording fails, check Windows microphone access and the default input.
 Install whisper.cpp and a compatible model separately, then configure their
 paths in Voice setup. Actual microphone capture needs verification on your
