@@ -9,7 +9,7 @@ import time
 from zoneinfo import ZoneInfo
 from sqlalchemy.exc import SQLAlchemyError
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal, QSettings
+from PySide6.QtCore import QObject, Qt, QTimer, Signal, QSettings, QEvent
 from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
@@ -164,9 +164,6 @@ class ChatWindow(QWidget):
         hide.clicked.connect(self.close)
         header.addWidget(hide)
         layout.addLayout(header)
-        note = QLabel("Your local productivity assistant")
-        note.setObjectName("muted")
-        layout.addWidget(note)
 
         self.address = QLineEdit(self.connection["address"], self)
         self.model = QLineEdit(self.connection["model"], self)
@@ -194,6 +191,7 @@ class ChatWindow(QWidget):
         self._connection_label()
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.viewport().installEventFilter(self)
         self.messages = QWidget()
         self.messages.setObjectName("messages")
         self.message_layout = QVBoxLayout(self.messages)
@@ -213,7 +211,7 @@ class ChatWindow(QWidget):
         self.composer = Composer()
         self.composer.setPlaceholderText("Plan a focused work session…")
         self.composer.setAccessibleName("Message")
-        self.composer.setFixedHeight(88)
+        self.composer.setFixedHeight(72)
         self.composer.textChanged.connect(self._typing)
         self.composer.send_requested.connect(self.send)
         layout.addWidget(self.composer)
@@ -323,6 +321,7 @@ class ChatWindow(QWidget):
     def _bubble(self, speaker, text):
         from .chat_widgets import MessageBubble
         frame = MessageBubble(speaker, text)
+        frame.setMinimumWidth(min(520, max(180, self.scroll.viewport().width() - 48)))
         label = frame.text
         self.message_layout.insertWidget(self.message_layout.count() - 1, frame,0,
             Qt.AlignmentFlag.AlignRight if speaker == "You" else Qt.AlignmentFlag.AlignLeft)
@@ -331,6 +330,13 @@ class ChatWindow(QWidget):
             old = self.message_layout.takeAt(0)
             old.widget().deleteLater()
         return label
+
+    def eventFilter(self, watched, event):
+        if hasattr(self, "scroll") and watched is self.scroll.viewport() and event.type() == QEvent.Type.Resize:
+            for frame in self.messages.findChildren(QFrame):
+                if frame.objectName() in ("userBubble", "assistantBubble"):
+                    frame.setMinimumWidth(min(520, max(180, event.size().width() - 48)))
+        return super().eventFilter(watched, event)
 
     def _typing(self):
         self._draft_timer.start(400)
@@ -397,9 +403,9 @@ class ChatWindow(QWidget):
         provider = self.connection["provider"]
         cloud = provider != "local"
         state = "Connected" if self._connection_health else "Configured" if self.connection.get("model") else "Choose a model"
-        model = self.connection.get("model", "")
-        self.connection_note.setText(f"{state} · {model}\n" + ("Cloud chat enabled · messages leave this laptop" if cloud else
-            ("Local · thinking skipped" if self.connection.get("skip_thinking") else "Local · model default thinking")))
+        self.connection_note.setText(f"{state} · " + ("Cloud · messages leave this laptop" if cloud else "Local AI"))
+        self.connection_note.setToolTip(self.connection.get("model", "") +
+            (" · thinking skipped" if self.connection.get("skip_thinking") else " · model default thinking"))
         self.connection_note.setStyleSheet(f"color:{COLORS['success']};" if self._connection_health else "")
         self.address.setReadOnly(cloud)
         self.address.setAccessibleName("Model server address")
@@ -793,6 +799,7 @@ class CompanionController(QObject):
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = QSystemTrayIcon(self)
             self.tray_menu = QMenu(pet)
+            self.tray_menu.setStyleSheet(stylesheet())
             self.pet_action = self.tray_menu.addAction("Hide pet", self.toggle_pet)
             self.tray_menu.addAction("Open chat", self.show_chat)
             task_action = self.tray_menu.addAction("Tasks & Pending", self.show_tasks)
@@ -914,7 +921,7 @@ class CompanionController(QObject):
         self.chat.send_button.setEnabled(not busy and (self.chat._busy or bool(self.chat.composer.toPlainText().strip())))
         self.pet.controls.mic.setEnabled(not busy or self.voice.recording)
         self.pet.controls.mic.setToolTip("Stop recording" if self.voice.recording else ("Transcribing locally…" if busy else "Start voice input"))
-        self.pet.controls.mic.setStyleSheet("background:#A94764;" if self.voice.recording else "")
+        self.pet.controls.mic.setStyleSheet(f"background:{COLORS['border']};" if self.voice.recording else "")
         self._sync_tray()
         if not self.chat._busy:
             self.pet.react(("microphone_on" if self.voice.recording else "thinking") if busy else "finished")

@@ -16,6 +16,9 @@ python -m venv .venv
 
 Once dependencies are installed, double-click `run_petlink.bat`.
 
+- The native interface uses a shared black/white/grayscale theme; original pet
+  artwork retains its colors. Saved tasks offer Today, Upcoming, Recurring and
+  Completed views; individual recurring dates remain in Occurrences.
 - Chat keeps model configuration in Settings, with background model discovery and
   connection tests. Conversation bubbles support Copy, microphone input remains
   explicit, and task cards offer reviewed confirmation or inactive Pending storage.

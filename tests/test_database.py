@@ -31,6 +31,18 @@ class DatabaseTests(unittest.TestCase):
         with self.db.engine.connect() as conn:
             self.assertEqual(conn.execute(text("SELECT version_num FROM alembic_version")).scalar(), "005")
 
+    def test_task_views_filter_before_pagination(self):
+        for title, due, status in (("Today", "2026-11-06", "pending"),
+                                   ("Later", "2026-11-10", "pending"),
+                                   ("Finished", "2026-11-06", "done")):
+            action = create(title)
+            action["values"].update(due_date=due, status=status)
+            self.db.confirm(self.db.propose([action]), 1)
+        self.assertEqual([t["title"] for t in self.db.tasks(limit=1, scope="today", today="2026-11-06")], ["Today"])
+        self.assertEqual([t["title"] for t in self.db.tasks(scope="upcoming", today="2026-11-06")], ["Later"])
+        self.assertEqual([t["title"] for t in self.db.tasks(scope="completed")], ["Finished"])
+        self.assertEqual(self.db.tasks(scope="recurring"), [])
+
     def test_revision_invalidates_old_confirmation_and_prevents_duplicates(self):
         pending = self.db.propose([create("Five questions")])
         self.db.revise(pending, 1, [create("Three questions")])

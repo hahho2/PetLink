@@ -68,7 +68,7 @@ class RedesignTests(unittest.TestCase):
             self.chat._task_context=dict(date="2026-11-05",messages=[],action=action,pending=None,question=None)
             controller.review_model_draft(action)
             self.assertFalse(self.db.tasks())
-            button=next(b for b in controller.draft_card.findChildren(QPushButton) if b.text()=="Confirm and save")
+            button=next(b for b in controller.draft_card.findChildren(QPushButton) if b.text()=="Confirm")
             button.click()
             self.assertEqual(len(self.db.tasks()),1)
             button.click()

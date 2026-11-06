@@ -1,4 +1,5 @@
 """Character-specific motion and vector expression symbols, independent of AI."""
+from .ui_theme import COLORS
 from functools import lru_cache
 import math
 
@@ -147,9 +148,9 @@ def notification_icon(kind):
     pixmap.fill(Qt.GlobalColor.transparent)
     p = QPainter(pixmap)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(QPen(QColor(INK), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    p.setPen(QPen(QColor(COLORS["background"]), 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
     if kind == "animal_cat":
-        p.setBrush(QColor("#FFD166"))
+        p.setBrush(QColor(COLORS["text"]))
         bell = QPainterPath(QPointF(7, 26))
         bell.cubicTo(12, 23, 8, 8, 18, 8)
         bell.cubicTo(28, 8, 24, 23, 29, 26)
@@ -161,17 +162,17 @@ def notification_icon(kind):
         p.drawLine(32, 11, 33, 18)
     else:
         if kind == "anime_coral":
-            p.setBrush(QColor("#FFB8D0"))
+            p.setBrush(QColor(COLORS["muted"]))
             for i in range(5):
                 a = i * math.tau / 5
                 p.drawEllipse(QRectF(18+math.sin(a)*9-7, 18-math.cos(a)*9-7, 14, 14))
-            p.setBrush(QColor("#FFE9AD"))
+            p.setBrush(QColor(COLORS["text"]))
             p.drawEllipse(QRectF(9,9,18,18))
         else:
-            star(p, 18, 18, 16, "#FFD166")
-        p.setPen(QPen(QColor(INK), 2.7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            star(p, 18, 18, 16, COLORS["text"])
+        p.setPen(QPen(QColor(COLORS["background"]), 2.7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         p.drawLine(18, 11, 18, 20)
-        p.setBrush(QColor(INK))
+        p.setBrush(QColor(COLORS["background"]))
         p.drawEllipse(QRectF(17,24,2,2))
     p.end()
     return QIcon(pixmap)

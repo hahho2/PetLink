@@ -1,4 +1,5 @@
 """Small keyboard-accessible controls painted beneath the companion."""
+from .ui_theme import COLORS, stylesheet
 from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QToolButton
@@ -9,7 +10,7 @@ def icon(kind):
     pix.fill(Qt.GlobalColor.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(QPen(QColor("#F4EFFA"), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+    p.setPen(QPen(QColor(COLORS["text"]), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
     if kind == "mic":
         p.drawRoundedRect(QRectF(11, 4, 6, 13), 3, 3)
         p.drawArc(QRectF(7, 8, 14, 14), 180*16, 180*16)
@@ -39,13 +40,7 @@ class PetControls(QFrame):
     def __init__(self, pet):
         super().__init__(pet)
         self.setGeometry(0, 268, 240, 132)
-        self.setStyleSheet("""
-            QToolButton { background:#302E43; color:#F4EFFA; border:1px solid #56516D; border-radius:18px; }
-            QToolButton:hover, QToolButton:focus { border:2px solid #C9B4F4; }
-            QToolButton:disabled { background:#56516D; }
-            QLineEdit { background:#242333; color:#F4EFFA; border:1px solid #C9B4F4; border-radius:8px; padding:6px; }
-            QLabel { color:#F4EFFA; background:#302E43; border-radius:7px; padding:3px; font:11px 'Segoe UI'; }
-        """)
+        self.setStyleSheet(stylesheet() + f"QLabel {{ background:{COLORS['surface']}; border-radius:7px; padding:3px; font-size:11px; }}")
         row = QFrame(self)
         row.setGeometry(42, 0, 156, 40)
         layout = QHBoxLayout(row)

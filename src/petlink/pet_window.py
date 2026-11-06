@@ -85,7 +85,7 @@ class PetWindow(QWidget):
         self.badge.setGeometry(195, 3, 36, 36)
         from PySide6.QtCore import QSize
         self.badge.setIconSize(QSize(36, 36))
-        self.badge.setStyleSheet("QToolButton { background:transparent; border:none; } QToolButton:focus { border:2px solid #C9B4F4; border-radius:10px; }")
+        self.badge.setStyleSheet("QToolButton { background:transparent; border:none; } QToolButton:focus { border:2px solid #F5F5F5; border-radius:10px; }")
         self.badge.setAccessibleName("Unread task notifications")
         self.badge.setCursor(Qt.CursorShape.PointingHandCursor)
         self.badge.clicked.connect(self.controls.notification_requested.emit)
@@ -280,6 +280,8 @@ class PetWindow(QWidget):
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 - Qt API name
         menu = QMenu(self)
+        from .ui_theme import stylesheet
+        menu.setStyleSheet(stylesheet())
         menu.addAction("Open chat", self.chat_requested.emit)
         menu.addAction("Voice setup", self.voice_setup_requested.emit)
         if self.tray_available:

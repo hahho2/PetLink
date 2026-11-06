@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton,
-    QTabWidget, QVBoxLayout, QWidget)
+    QTabBar, QTabWidget, QVBoxLayout, QWidget)
 from sqlalchemy.exc import SQLAlchemyError
 
 from .ui_theme import stylesheet
@@ -157,14 +157,16 @@ class TaskWindow(QWidget):
         self.setObjectName("chat")
         self.setWindowTitle("PetLink — Tasks & Pending")
         self.setStyleSheet(stylesheet())
-        self.resize(520, 690)
+        self.resize(600, 760)
         self.setMinimumSize(390, 570)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 20, 22, 18)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
         heading = QLabel("Tasks & Pending")
         heading.setObjectName("title")
         layout.addWidget(heading)
         note = QLabel("Task changes stay pending until you confirm their preview.")
+        note.setObjectName("muted")
         note.setWordWrap(True)
         layout.addWidget(note)
         self.tabs = QTabWidget()
@@ -172,18 +174,44 @@ class TaskWindow(QWidget):
         self.tasks.setAccessibleName("Saved tasks")
         self.pending = QListWidget()
         self.pending.setAccessibleName("Pending task drafts")
-        self.tabs.addTab(self.tasks, "Tasks")
-        self.tabs.addTab(self.pending, "Pending")
         self.occurrences = QListWidget()
         self.occurrences.setAccessibleName("Scheduled task occurrences")
-        self.tabs.addTab(self.occurrences, "Occurrences")
+        self.empty_states = []
+        for title, listing, message in (
+            ("Tasks", self.tasks, "No saved tasks yet. Choose New task to prepare your first draft."),
+            ("Pending", self.pending, "No drafts waiting. New task drafts appear here for your review."),
+            ("Occurrences", self.occurrences, "No scheduled dates yet. Confirm a task with a reminder to see its dates here."),
+        ):
+            page = QWidget()
+            page_layout = QVBoxLayout(page)
+            page_layout.setContentsMargins(0, 0, 0, 0)
+            if listing is self.tasks:
+                self.task_filters = QTabBar()
+                self.task_filters.setAccessibleName("Saved task view")
+                self.task_filters.setExpanding(False)
+                for label in ("All", "Today", "Upcoming", "Recurring", "Completed"):
+                    self.task_filters.addTab(label)
+                page_layout.addWidget(self.task_filters)
+            empty = QLabel(message)
+            empty.setObjectName("muted")
+            empty.setWordWrap(True)
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setMargin(24)
+            page_layout.addWidget(empty, 1)
+            page_layout.addWidget(listing, 1)
+            self.empty_states.append(empty)
+            self.tabs.addTab(page, title)
         layout.addWidget(self.tabs, 1)
         row = QHBoxLayout()
+        self.task_actions = QWidget()
+        task_actions = QHBoxLayout(self.task_actions)
+        task_actions.setContentsMargins(0, 0, 0, 0)
         for title, handler in (("New task", self.new_task), ("Edit", self.edit_task), ("Remove", self.delete_task), ("Refresh", self.refresh)):
             button = QPushButton(title)
             button.clicked.connect(handler)
-            row.addWidget(button)
+            (task_actions if title in ("Edit", "Remove") else row).addWidget(button)
         layout.addLayout(row)
+        layout.addWidget(self.task_actions)
         self.complete_occurrence_button = QPushButton("Complete selected occurrence")
         self.complete_occurrence_button.clicked.connect(self.complete_occurrence)
         layout.addWidget(self.complete_occurrence_button)
@@ -204,22 +232,27 @@ class TaskWindow(QWidget):
         self.confirm = QPushButton("Confirm changes")
         self.confirm.setObjectName("primary")
         self.confirm.clicked.connect(self.confirm_draft)
-        for button in (self.edit, self.discard, self.confirm):
+        for button in (self.edit, self.discard):
             actions.addWidget(button)
         layout.addLayout(actions)
+        layout.addWidget(self.confirm)
         self.feedback = QLabel()
         self.feedback.setWordWrap(True)
         self.feedback.setMinimumHeight(40)
         layout.addWidget(self.feedback)
         self.pending.currentItemChanged.connect(self.select_pending)
         self.tabs.currentChanged.connect(self.refresh)
+        self.task_filters.currentChanged.connect(self.refresh)
         self.refresh()
 
     def refresh(self):
         try:
             selected = self.selected(self.pending)
+            selected_task = self.selected(self.tasks)
+            selected_occurrence = self.selected(self.occurrences)
             self.tasks.clear()
-            rows = self.database.tasks(limit=self._limit + 1)
+            scope = ("all", "today", "upcoming", "recurring", "completed")[self.task_filters.currentIndex()]
+            rows = self.database.tasks(limit=self._limit + 1, scope=scope)
             more_tasks = len(rows) > self._limit
             for task in rows[:self._limit]:
                 schedule = task["schedule"]
@@ -231,12 +264,19 @@ class TaskWindow(QWidget):
                 item = QListWidgetItem(caption)
                 item.setData(Qt.ItemDataRole.UserRole, task)
                 self.tasks.addItem(item)
+                if selected_task and task["id"] == selected_task["id"]:
+                    self.tasks.setCurrentItem(item)
             self.pending.clear()
             proposals = self.database.pending(limit=self._pending_limit + 1)
             more_pending = len(proposals) > self._pending_limit
             for pending in proposals[:self._pending_limit]:
-                item = QListWidgetItem(summary(json.loads(pending["payload"])).split("\n")[0])
-                item.setText(item.text() + "\nWaiting for confirmation")
+                actions = json.loads(pending["payload"])
+                caption = summary(actions).split("\n")[0]
+                if len(actions) == 1 and actions[0]["kind"] in ("create", "update"):
+                    values = actions[0]["values"]
+                    caption += f"\nDue: {values.get('due_date') or 'Not set'} · {values.get('priority', 'normal').title()} priority"
+                item = QListWidgetItem(caption + "\nWaiting for confirmation")
+                item.setToolTip(item.text())
                 item.setData(Qt.ItemDataRole.UserRole, pending)
                 self.pending.addItem(item)
                 if selected and pending["id"] == selected["id"]:
@@ -250,8 +290,18 @@ class TaskWindow(QWidget):
                 item = QListWidgetItem(f"{occurrence['title']} — {occurrence['scheduled_date']}\n{label} · {occurrence['local_time'] or '00:00'} · {occurrence['timezone']}")
                 item.setData(Qt.ItemDataRole.UserRole, occurrence)
                 self.occurrences.addItem(item)
+                if selected_occurrence and occurrence["id"] == selected_occurrence["id"]:
+                    self.occurrences.setCurrentItem(item)
             occurrence_tab = self.tabs.currentIndex() == 2
             self.complete_occurrence_button.setVisible(occurrence_tab)
+            self.task_actions.setVisible(not pending_tab and not occurrence_tab)
+            for control in (self.preview, self.edit, self.discard, self.confirm):
+                control.setVisible(pending_tab)
+            for listing, empty in zip((self.tasks, self.pending, self.occurrences), self.empty_states):
+                empty.setVisible(listing.count() == 0)
+                listing.setVisible(listing.count() > 0)
+            self.empty_states[0].setText("No saved tasks yet. Choose New task to prepare your first draft." if scope == "all" else
+                f"No {scope} tasks in this view. Choose All to see your other saved tasks.")
             self.more.setText("Load more occurrences" if occurrence_tab else ("Load more drafts" if pending_tab else "Load more tasks"))
             self.more.setVisible(len(occurrences) > self._occurrence_limit if occurrence_tab else (more_pending if pending_tab else more_tasks))
             self.select_pending()

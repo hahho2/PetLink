@@ -81,7 +81,7 @@ class Feedback(QFrame):
             summary = "Could not save your changes. Keep this window open and retry."
         else:
             summary = text if len(text)<140 else text.split(". ")[0]+"."
-        self.summary.setText(summary)
+        self.summary.setText(("Error · " if error else "") + summary)
         self.details.setVisible(summary != text)
 
 
@@ -106,13 +106,15 @@ class TaskDraftCard(QFrame):
         layout.addWidget(title)
         schedule = values["schedule"]
         from .task_window import summary
-        detail = QLabel(summary([action]))
+        detail = QLabel("\n".join(summary([action]).splitlines()[1:]))
         detail.setTextFormat(Qt.TextFormat.PlainText)
         detail.setWordWrap(True)
         layout.addWidget(detail)
         actions = QGridLayout()
-        for i,(label, signal) in enumerate((("Edit", self.edit_requested), ("Confirm and save", self.confirm_requested), ("Pending", self.pending_requested), ("Cancel", self.cancel_requested))):
+        for i,(label, signal) in enumerate((("Edit", self.edit_requested), ("Confirm", self.confirm_requested), ("Save as Pending", self.pending_requested), ("Cancel", self.cancel_requested))):
             button = QPushButton(label)
+            if signal == self.confirm_requested:
+                button.setObjectName("primary")
             button.clicked.connect(signal.emit)
             actions.addWidget(button,i//2,i%2)
         layout.addLayout(actions)

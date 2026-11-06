@@ -118,9 +118,19 @@ class Database:
             row = conn.execute(text("SELECT * FROM pending_actions WHERE id=:id"), {"id": pending_id}).mappings().first()
             return dict(row) if row else None
 
-    def tasks(self, limit=100, offset=0):
+    def tasks(self, limit=100, offset=0, *, scope="all", today=None):
+        today = today or date.today().isoformat()
+        conditions = {
+            "all": "1=1",
+            "today": "status != 'done' AND due_date = :today",
+            "upcoming": "status != 'done' AND due_date > :today",
+            "recurring": "status != 'done' AND EXISTS (SELECT 1 FROM task_schedules s WHERE s.task_id=tasks.id AND s.frequency != 'none')",
+            "completed": "status = 'done'",
+        }
+        if scope not in conditions:
+            raise ValueError("Unknown task view")
         with self.engine.connect() as conn:
-            rows = conn.execute(text("SELECT * FROM tasks WHERE deleted_at IS NULL ORDER BY id DESC LIMIT :limit OFFSET :offset"), {"limit": limit, "offset": offset}).mappings()
+            rows = conn.execute(text(f"SELECT * FROM tasks WHERE deleted_at IS NULL AND ({conditions[scope]}) ORDER BY id DESC LIMIT :limit OFFSET :offset"), {"limit": limit, "offset": offset, "today": today}).mappings()
             tasks = []
             for row in rows:
                 schedule = get_schedule(conn, row["id"])

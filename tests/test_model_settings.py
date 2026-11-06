@@ -200,7 +200,7 @@ class ModelSettingsTests(unittest.TestCase):
         with patch("petlink.chat_window.ModelSettings", return_value=dialog), patch.object(dialog, "exec", return_value=QDialog.DialogCode.Accepted):
             chat.model_settings()
         self.assertEqual(chat._provider().config.extra["reasoning_effort"], "none")
-        self.assertIn("thinking skipped", chat.connection_note.text())
+        self.assertIn("thinking skipped", chat.connection_note.toolTip())
         chat.shutdown()
         restored = ChatWindow(settings=QSettings(self.settings.fileName(), QSettings.Format.IniFormat))
         self.assertTrue(restored.connection["skip_thinking"])
@@ -220,7 +220,7 @@ class ModelSettingsTests(unittest.TestCase):
         external.sync()
         self.assertEqual(chat._provider().config.extra["reasoning_effort"], "none")
         self.assertTrue(chat.connection["skip_thinking"])
-        self.assertIn("thinking skipped", chat.connection_note.text())
+        self.assertIn("thinking skipped", chat.connection_note.toolTip())
         chat.shutdown()
         self.assertTrue(load_connection(external, self.store)["skip_thinking"])
         chat.hide()
@@ -242,7 +242,7 @@ class ModelSettingsTests(unittest.TestCase):
             model="test-model", key="dummy-key", consent=True)
         with patch("petlink.chat_window.ModelSettings", return_value=dialog), patch.object(dialog, "exec", return_value=QDialog.DialogCode.Accepted):
             chat.model_settings()
-        self.assertIn("Cloud chat enabled", chat.connection_note.text())
+        self.assertIn("messages leave this laptop", chat.connection_note.text())
         self.assertEqual(chat.composer.toPlainText(), "Keep this draft")
         self.assertEqual(chat.history[0].content, "My plan")
         self.assertEqual(chat._provider().config.api_key, "dummy-key")
